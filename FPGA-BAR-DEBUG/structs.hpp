@@ -933,3 +933,58 @@ struct InternalSlotContext {
 
 	InternalEndpointContext internal_endpoint_contexts[31];
 };
+
+struct setup_t {
+	uint8_t bm_request_type;
+	uint8_t b_request;
+
+	uint16_t w_value;
+	uint16_t w_index;
+	uint16_t w_length;
+};
+
+struct usbmon_packet {
+	uint64_t id;             /*  0: URB ID - from submission to callback */
+	unsigned char type;      /*  8: Same as text; extensible. */
+	unsigned char xfer_type; /*     ISO (0), Intr, Control, Bulk (3) */
+	unsigned char epnum;     /*     Endpoint number and transfer direction */
+	unsigned char devnum;    /*     Device address */
+	uint16_t busnum;         /* 12: Bus number */
+	char flag_setup;         /* 14: Same as text */
+	char flag_data;          /* 15: Same as text; Binary zero is OK. */
+	int64_t ts_sec;          /* 16: gettimeofday */
+	int32_t ts_usec;         /* 24: gettimeofday */
+	int32_t status;          /* 28: */
+	unsigned int length;     /* 32: Length of data (submitted or actual) */
+	unsigned int len_cap;    /* 36: Delivered length */
+	union {                  /* 40: */
+		//unsigned char setup[8];         /* Only for Control S-type */
+		setup_t setup;
+		struct iso_rec {                /* Only for ISO */
+			int32_t error_count;
+			int32_t numdesc;
+		} iso;
+	} s;
+	int32_t interval;        /* 48: Only for Interrupt and ISO */
+	int32_t start_frame;     /* 52: For ISO */
+	uint32_t xfer_flags;     /* 56: copy of URB's transfer_flags */
+	uint32_t ndesc;          /* 60: Actual number of ISO descriptors */
+};
+
+struct usb_packet_map_entry {
+	uint8_t slot_id;
+	uint8_t endpoint_id;
+	uint8_t bm_request_type;
+	uint8_t b_request;
+
+	uint16_t w_value;
+	uint16_t w_index;
+
+	uint16_t data_length;
+	uint16_t bram_address;
+};
+
+struct usb_packet_entry {
+	usb_packet_map_entry* map_entry;
+	void* data;
+};

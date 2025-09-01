@@ -10,8 +10,6 @@
 #include "packet_data.hpp"
 #include "utils.hpp"
 
-std::string pcap_file = "D:\\dev\\archives\\arcade-controller-2.pcap";
-
 void xhci::init_pointers() {
 	capReg = (HostControllerCapabilityRegisters*)(memory::bar0.data());
 	xhci::opReg = (HostControllerOperationalRegisters*)(memory::bar0.data() + capReg->CAPLENGTH);
@@ -59,14 +57,6 @@ void xhci::xhci_reset() {
 
 	opRegister->USBSTS_RAW = 0;
 	(&opRegister->USBSTS)->HCHalted = 1;
-	/*
-	opRegister->USBSTS.HCHalted = 1;
-	opRegister->USBSTS.Host_System_Error = 0;
-	opRegister->USBSTS.Event_Interrupt = 0;
-	opRegister->USBSTS.Port_Change_Detect = 0;
-	opRegister->USBSTS.Save_State_Status = 0;
-	opRegister->USBSTS.Restore_State_Status = 0;
-	opRegister->USBSTS.Host_Controller_Error = 0;*/
 
 	opRegister->DNCTRL = 0;
 
@@ -90,17 +80,8 @@ void xhci::xhci_reset() {
 
 		opRegister->PortRegisters[i].PORTSC.Port_Link_State = 5;
 		opRegister->PortRegisters[i].PORTSC.Port_Speed = 0;
-		//if (i < 4) { //USB2
-		//	opRegister->PortRegisters[i].PORTSC.Port_Link_State = 0;
-		//	opRegister->PortRegisters[i].PORTSC.Port_Speed = 1;
-		//}
-		//else { //USB3
-		//	opRegister->PortRegisters[i].PORTSC.Port_Link_State = 5;
-		//	opRegister->PortRegisters[i].PORTSC.Port_Speed = 2;
-		//}
 
 		opRegister->PortRegisters[i].PORTSC.Port_Power = 1;
-		//opRegister->PortRegisters[i].PORTSC.Port_Speed = 0;
 		opRegister->PortRegisters[i].PORTSC.Port_Indicator_Control = 0;
 		opRegister->PortRegisters[i].PORTSC.Port_Link_State_Write_Strobe = 0;
 		opRegister->PortRegisters[i].PORTSC.Connect_Status_Change = 0;
@@ -118,14 +99,6 @@ void xhci::xhci_reset() {
 		opRegister->PortRegisters[i].PORTSC.Warm_Port_Reset = 0;
 
 		*((uint32_t*)&opRegister->PortRegisters[i].PORTPMSC_USB3) = 0;
-
-		//if (i == 5) {
-		//	opRegister->PortRegisters[i].PORTSC.Port_Enable_Disable = 1;
-		//	opRegister->PortRegisters[i].PORTSC.Port_Link_State = 7;
-		//	opRegister->PortRegisters[i].PORTSC.Port_Power = 1;
-		//	opRegister->PortRegisters[i].PORTSC.Port_Speed = 1;
-		//	opRegister->PortRegisters[i].PORTSC.Connect_Status_Change = 1;
-		//}
 
 		opRegister->PortRegisters[i].PORTLI_USB3.Link_Error_Count = 0;
 		opRegister->PortRegisters[i].PORTLI_USB3.Rx_Lane_Count = 0;
@@ -158,9 +131,19 @@ void xhci::portsc_reset(int port_index) {
 	PortRegisterSet_PORTSC* pPORTSC = &xhci::opReg->PortRegisters[port_index].PORTSC;
 	uint32_t raw = *(uint32_t*)pPORTSC;
 	printf("PORTSC: 0x%X\n", raw);
+	opReg->USBSTS.Port_Change_Detect = 1;
+
 	pPORTSC->Port_Reset = 0;
 	pPORTSC->Port_Reset_Change = 1;
 	
+	if (port_index == 0) {
+		pPORTSC->Port_Speed = 3;
+		pPORTSC->Port_Link_State = 0;
+		if (!pPORTSC->Port_Enable_Disable)
+			pPORTSC->Port_Enabled_Disabled_Change = 1;
+		pPORTSC->Port_Enable_Disable = 1;
+	}
+
 	if (xhci::internal_slot_contexts[port_index + 1].slot_state != SlotState::DISABLE) {
 		printf("XDXDXDDXXD\n");
 		xhci::internal_state = InternalState::ENABLE_SLOT_RESETED;
@@ -471,10 +454,21 @@ uint32_t handle_stop_endpoint_command(TRB_Stop_Endpoint_Command_TRB* seTRB) {
 }
 
 uint32_t handle_set_tr_dequeue_pointer_command(TRB_Set_TR_Dequeue_Pointer_Command* stTRB) {
-	xhci::internal_slot_contexts[stTRB->Slot_ID].internal_endpoint_contexts[stTRB->Endpoint_ID - 1].tr_dequeue_pointer = stTRB->New_TR_Dequeue_Pointer << 4;
+	uint64_t new_pointer = stTRB->New_TR_Dequeue_Pointer << 4;
+	xhci::internal_slot_contexts[stTRB->Slot_ID].internal_endpoint_contexts[stTRB->Endpoint_ID - 1].tr_dequeue_pointer = new_pointer;
 	xhci::internal_slot_contexts[stTRB->Slot_ID].internal_endpoint_contexts[stTRB->Endpoint_ID - 1].cycle_state = stTRB->Dequeue_Cycle_state;
 
 	printf(" Set TR dequeue = 0x%llX cycle = %d\n", stTRB->New_TR_Dequeue_Pointer << 4, stTRB->Dequeue_Cycle_state);
+	uint64_t p_ep_ctx = xhci::internal_slot_contexts[stTRB->Slot_ID].internal_endpoint_contexts[stTRB->Endpoint_ID - 1].p_ctx;
+
+	uint32_t ep_ctx[5];
+
+	memory::read_raw(p_ep_ctx, sizeof(ep_ctx), (PBYTE)&ep_ctx);
+
+	ep_ctx[2] = (new_pointer & 0xFFFFFFFF) | stTRB->Dequeue_Cycle_state;
+	ep_ctx[3] = new_pointer >> 32;
+
+	memory::write_raw(p_ep_ctx, sizeof(ep_ctx), (PBYTE)&ep_ctx);
 
 	return 1;
 }
@@ -635,6 +629,7 @@ void xhci::consume_command_ring(BARLogEntry* entry) {
 
 uint64_t last_data_stage_trb_ptr = 0x0;
 uint64_t last_status_stage_trb_ptr = 0x0;
+int last_sent_data_length = 0;
 
 TRB_Setup_Stage  last_setup_trb;
 TRB_Data_Stage   last_data_trb;
@@ -760,6 +755,10 @@ void xhci::handle_transfer_ring(uint32_t offset, uint8_t ep_id, uint16_t stream_
 			uint16_t w_index         = last_setup_trb.w_Index;
 			
 			for (usb_packet_entry entry : packet::entries) {
+				if (entry.map_entry->slot_id != slot_id)
+					continue;
+				if (entry.map_entry->endpoint_id != ep_id)
+					continue;
 				if (entry.map_entry->bm_request_type != bm_request_type)
 					continue;
 				if (entry.map_entry->b_request != b_request)
@@ -815,9 +814,12 @@ void xhci::handle_transfer_ring(uint32_t offset, uint8_t ep_id, uint16_t stream_
 				transfer_event.Completion_Code = 0x6;
 			}
 
-			if (last_status_trb.Interrupt_On_Completion) {
-				xhci::send_event_ring(0, (PBYTE)&transfer_event);
+			xhci::send_event_ring(0, (PBYTE)&transfer_event);
+
+			if (!trb->Evaluate_Next_TRB) {
+				next = false;
 			}
+			last_sent_data_length = length;
 		}
 		else if (uTRB.TRB_Type == 7) {
 			TRB_Event_Data* trb = (TRB_Event_Data*)&uTRB;
@@ -830,22 +832,23 @@ void xhci::handle_transfer_ring(uint32_t offset, uint8_t ep_id, uint16_t stream_
 			printf("Block Event Interrupt: %d\n", trb->Block_Event_Interrupt);
 			printf("==========================\n");
 
-			if (trb->Interrupt_On_Completion) {
-				TRB_Transfer_Event trb_completion = {};
-				trb_completion.TRB_Pointer = trb->Event_Data;
-				trb_completion.TRB_Type = 32;
-				trb_completion.Endpoint_ID = ep_id;
-				trb_completion.Slot_ID = slot_id;
-				trb_completion.Event_Data = 1;
-				trb_completion.Completion_Code = 0x1;
-				trb_completion.TRB_Transfer_Length = last_setup_trb.w_Length;
-				xhci::send_event_ring(trb->Interrupter_Target, (PBYTE)&trb_completion);
+			TRB_Transfer_Event trb_completion = {};
+			trb_completion.TRB_Pointer = trb->Event_Data;
+			trb_completion.TRB_Type = 32;
+			trb_completion.Endpoint_ID = ep_id;
+			trb_completion.Slot_ID = slot_id;
+			trb_completion.Event_Data = 1;
+			trb_completion.Completion_Code = 0x1;
+			trb_completion.TRB_Transfer_Length = last_sent_data_length == -1 ? last_setup_trb.w_Length : last_setup_trb.w_Length - last_sent_data_length;
+			xhci::send_event_ring(trb->Interrupter_Target, (PBYTE)&trb_completion);
+			if (!trb->Evaluate_Next_TRB) {
+				//next = false;
 			}
 		}
 
 		tr_dequeue_pointer += 0x10;
 	}
-
+	printf("NEXT RESUME TR POINTER: 0x%llX\n", tr_dequeue_pointer);
 	iec->tr_dequeue_pointer = tr_dequeue_pointer;//xhci::ep0_dequeue_pointer[slot_id - 1] = tr_dequeue_pointer;
 	iec->cycle_state = cycle_state;//xhci::ep0_cycle_state[slot_id - 1] = cycle_state;
 }

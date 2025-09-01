@@ -13,7 +13,6 @@
 #include <pcap.h>
 #include <pcap/usb.h>
 
-std::string pcap_capture_file = "D:\\dev\\archives\\arcade-controller-2.pcap";
 #define MAX_MAP_ENTRIES 128
 usb_packet_map_entry map_entries[MAX_MAP_ENTRIES];
 
@@ -29,7 +28,7 @@ std::vector<device_map> devices;
 void init_device_map() {
 	device_map dev_map = {};
 	dev_map.bus_num = 1;
-	dev_map.dev_num = 4;
+	dev_map.dev_num = 3;
 	dev_map.slot_id = 1;
 	devices.push_back(dev_map);
 }
@@ -57,10 +56,11 @@ static void new_entry(
 		if (entry.map_entry->b_request != b_request) continue;
 		if (entry.map_entry->w_value != w_value) continue;
 		if (entry.map_entry->w_index != w_index) continue;
-		if (entry.map_entry->data_length >= data_length) continue;
-		printf("data update %d -> %d!\n", entry.map_entry->data_length, data_length);
-		entry.data = pointer;
-		entry.map_entry->data_length = data_length;
+		if (entry.map_entry->data_length <= data_length) {
+			printf("data update %d -> %d!\n", entry.map_entry->data_length, data_length);
+			entry.data = pointer;
+			entry.map_entry->data_length = data_length;
+		}
 		return;
 	}
 
@@ -81,9 +81,9 @@ static void new_entry(
 	map_entry_index++;
 }
 
-void load_pcap() {
+void load_pcap(std::string file) {
 	char errbuf[PCAP_ERRBUF_SIZE];
-	pcap_t* handle = pcap_open_offline(pcap_capture_file.c_str(), errbuf);
+	pcap_t* handle = pcap_open_offline(file.c_str(), errbuf);
 
 	if (handle == NULL) {
 		std::cerr << errbuf << std::endl;
@@ -111,7 +111,8 @@ void load_pcap() {
 		if (packet->xfer_type == 2 && packet->type == 'C') {
 			printf("COMPLETE: packet: %llX %d.%d.%d\n", packet->id, packet->busnum, packet->devnum, packet->epnum & 0xF);
 			setup_t setup = pending_setups[packet->id].s.setup;
-			printf(" %02X %02X %04X %04X %d\n", setup.bm_request_type, setup.b_request, setup.w_index, setup.w_value, setup.w_length);
+			int ep_id = (packet->epnum & 0xF) + 1;
+			printf(" %d:%d %02X %02X %04X %04X %d\n", match_dev->slot_id, ep_id, setup.bm_request_type, setup.b_request, setup.w_index, setup.w_value, setup.w_length);
 			void* payload = (void*)((uint64_t)packet + sizeof(*packet));
 
 			void* buffer = 0;
@@ -124,7 +125,7 @@ void load_pcap() {
 				memcpy(buffer, payload, setup.w_length);
 			}
 
-			new_entry(match_dev->slot_id, packet->epnum & 0xF, setup.bm_request_type, setup.b_request, setup.w_value, setup.w_index, setup.w_length, 0, buffer);
+			new_entry(match_dev->slot_id, ep_id, setup.bm_request_type, setup.b_request, setup.w_value, setup.w_index, setup.w_length, 0, buffer);
 		}
 	}
 }
@@ -132,8 +133,8 @@ void load_pcap() {
 namespace packet {
 	void init() {
 		init_device_map();
-		load_pcap();
-
-
+		load_pcap("D:\\dev\\archives\\arcade-controller-win.pcap");
+		//load_pcap("D:\\dev\\archives\\arcade-controller-2.pcap");
+		//load_pcap("D:\\dev\\archives\\arcade-controller-linux.pcap");
 	}
 }

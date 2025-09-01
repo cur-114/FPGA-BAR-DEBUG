@@ -244,6 +244,17 @@ namespace memory {
 		for (int i = 0; i < 8; i++) {
 			Producer_Cycle_State[i] = false;
 		}
+
+		/*for (uint64_t offset = 0x8000; offset < 0x8378; offset += 0x4) {
+			uint32_t value = *(uint32_t*)(bar0.data() + offset);
+			if (value != 0)
+				printf("32'h%08llX : rd_rsp_data <= 32'h%08lX;\n", offset, value);
+		}*/
+
+		for (int i = 0; i < 32; i++) {
+			printf("32'h%02X : msix[%d:%d] <= dwr_data;\n", i * 4, i * 32 + 32 - 1, i * 32);
+		}
+
 		return true;
 	}
 
@@ -387,15 +398,12 @@ namespace memory {
 		TRB.Port_ID = 1;
 		TRB.TRB_Type = 0x22;
 		TRB.Completion_Code = 1;
-		opRegister->PortRegisters[0].PORTSC.Port_Enable_Disable = 1;
-		opRegister->PortRegisters[0].PORTSC.Port_Enabled_Disabled_Change = 1;
-		//opRegister->USBSTS.Event_Interrupt = 1;
+
 		opRegister->PortRegisters[0].PORTSC.Connect_Status_Change = 1;
 		opRegister->PortRegisters[0].PORTSC.Current_Connect_Status = 1;
 		opRegister->PortRegisters[0].PORTSC.Port_Link_State = 7;
 		opRegister->PortRegisters[0].PORTSC.Port_Speed = 1;
-		opRegister->PortRegisters[0].PORTSC.Wake_on_Connect_Enable = 0;
-		opRegister->PortRegisters[0].PORTSC.Wake_on_Over_current_Enable = 0;
+		opRegister->USBSTS.Port_Change_Detect = 1;
 		xhci::send_event_ring(0, (PBYTE)&TRB);
 	}
 
